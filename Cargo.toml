@@ -1,0 +1,9 @@
+[package]
+name = "ascent-pod2"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ascent = "0.8.0"
+pod2 = { path = "../pod2" }
+
