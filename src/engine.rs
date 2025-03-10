@@ -1,9 +1,9 @@
 use crate::types::*;
 use ascent::ascent;
-use pod2::frontend::{AnchoredKey, Origin, PodClass, Value as FrontendValue};
-use pod2::middleware::{hash_str, NativeOperation, PodId, containers::Array as MiddlewareArray, Value as MiddlewareValue};
+use pod2::frontend::AnchoredKey;
+use pod2::middleware::{hash_str, NativeOperation, Value as MiddlewareValue};
 
-use super::types::{WildcardId, WildcardStatement};
+use super::types::WildcardStatement;
 
 // Helper function to convert HashableValue to Value
 fn to_value(hv: &HashableValue) -> MiddlewareValue {
@@ -17,6 +17,8 @@ fn to_value(hv: &HashableValue) -> MiddlewareValue {
     }
 }
 
+// Helper function to check if one value contains another
+// Supports arrays and sets, returns false for other types
 fn check_contains(container: &HashableValue, contained: &HashableValue) -> bool {
     match (container, contained) {
         // For arrays, check if the contained value is an element
@@ -42,6 +44,7 @@ fn check_contains(container: &HashableValue, contained: &HashableValue) -> bool 
     }
 }
 
+// Main deduction engine that handles proof generation
 pub struct DeductionEngine {
     prog: AscentProgram,
 }
@@ -53,19 +56,23 @@ impl DeductionEngine {
         }
     }
 
+    // Add a known fact to the engine
     pub fn add_fact(&mut self, fact: HashableStatement) {
         self.prog.known_statement.push((fact,));
     }
 
+    // Set the target statement we're trying to prove
     pub fn set_target(&mut self, target: WildcardStatement) {
         self.prog.target_statement = vec![(target,)];
     }
 
+    // Run the deduction engine and return all proofs found
     pub fn prove(&mut self) -> Vec<(HashableStatement, DeductionChain)> {
         self.prog.run();
         self.prog.can_prove.clone()
     }
 
+    // Print a human-readable proof chain
     pub fn print_proof(&self, statement: HashableStatement, chain: DeductionChain) {
         println!("\nProved: {}", statement);
         if chain.is_empty() {
@@ -88,18 +95,20 @@ impl DeductionEngine {
 }
 
 ascent! {
-    relation known_statement(HashableStatement);
-    relation target_statement(WildcardStatement);
-    relation can_prove(HashableStatement, DeductionChain);
-    relation known_value(AnchoredKey, HashableValue);
-    relation known_equal(AnchoredKey, AnchoredKey);
-    relation known_gt(AnchoredKey, AnchoredKey);
-    relation known_lt(AnchoredKey, AnchoredKey);
-    relation known_neq(AnchoredKey, AnchoredKey);
-    relation known_contains(AnchoredKey, AnchoredKey);
-    relation reachable_equal(AnchoredKey, AnchoredKey, DeductionChain);
-    relation connected_to_target(AnchoredKey, AnchoredKey, DeductionChain);
+    // Core relations that track our knowledge and goals
+    relation known_statement(HashableStatement);  // Statements we know to be true
+    relation target_statement(WildcardStatement);  // The statement we're trying to prove
+    relation can_prove(HashableStatement, DeductionChain);  // Statements we can prove with their proof chains
+    relation known_value(AnchoredKey, HashableValue);  // Values we know for specific keys
+    relation known_equal(AnchoredKey, AnchoredKey);  // Known equality relationships
+    relation known_gt(AnchoredKey, AnchoredKey);  // Known greater-than relationships
+    relation known_lt(AnchoredKey, AnchoredKey);  // Known less-than relationships
+    relation known_neq(AnchoredKey, AnchoredKey);  // Known not-equal relationships
+    relation known_contains(AnchoredKey, AnchoredKey);  // Known contains relationships
+    relation reachable_equal(AnchoredKey, AnchoredKey, DeductionChain);  // Equality relationships we can prove through chains
+    relation connected_to_target(AnchoredKey, AnchoredKey, DeductionChain);  // Chains that connect to our target statement
 
+    // Base case: directly match known statements with wildcard targets
     can_prove(stmt, chain) <--
         target_statement(wild_stmt),
         known_statement(known_stmt),
@@ -109,6 +118,7 @@ ascent! {
         let stmt = known_stmt.clone(),
         let chain = vec![];
 
+    // Prove equality through chains of known equalities
     can_prove(stmt, chain) <--
         target_statement(target_stmt),
         if let WildcardStatement::Equal(wild_key, concrete_key) = target_stmt,
@@ -116,6 +126,7 @@ ascent! {
         if wild_key.matches(&found_key),
         let stmt = HashableStatement::Equal(found_key.clone(), concrete_key.clone());
 
+    // Prove greater-than relationships through chains
     can_prove(stmt, chain) <--
         target_statement(target_stmt),
         if let WildcardStatement::Gt(wild_key, concrete_key) = target_stmt,
@@ -123,6 +134,7 @@ ascent! {
         if wild_key.matches(&found_key),
         let stmt = HashableStatement::Gt(found_key.clone(), concrete_key.clone());
 
+    // Prove less-than relationships through chains
     can_prove(stmt, chain) <--
         target_statement(target_stmt),
         if let WildcardStatement::Lt(wild_key, concrete_key) = target_stmt,
@@ -130,6 +142,7 @@ ascent! {
         if wild_key.matches(&found_key),
         let stmt = HashableStatement::Lt(found_key.clone(), concrete_key.clone());
 
+    // Prove not-equal relationships through chains
     can_prove(stmt, chain) <--
         target_statement(target_stmt),
         if let WildcardStatement::NotEqual(wild_key, concrete_key) = target_stmt,
@@ -137,6 +150,7 @@ ascent! {
         if wild_key.matches(&found_key),
         let stmt = HashableStatement::NotEqual(found_key.clone(), concrete_key.clone());
 
+    // Prove contains relationships through chains
     can_prove(stmt, chain) <--
         target_statement(target_stmt),
         if let WildcardStatement::Contains(wild_key, concrete_key) = target_stmt,
@@ -144,43 +158,51 @@ ascent! {
         if wild_key.matches(&found_key),
         let stmt = HashableStatement::Contains(found_key.clone(), concrete_key.clone());
 
+    // Extract value assignments from known statements
     known_value(ak, v) <--
         known_statement(stmt),
         if let HashableStatement::ValueOf(ak, v) = stmt;
 
+    // Extract equality relationships from known statements
     known_equal(ak1, ak2) <--
         known_statement(stmt),
         if let HashableStatement::Equal(ak1, ak2) = stmt;
 
+    // Extract greater-than relationships from known statements
     known_gt(ak1, ak2) <--
         known_statement(stmt),
         if let HashableStatement::Gt(ak1, ak2) = stmt;
 
+    // Extract less-than relationships from known statements
     known_lt(ak1, ak2) <--
         known_statement(stmt),
         if let HashableStatement::Lt(ak1, ak2) = stmt;
 
+    // Extract not-equal relationships from known statements
     known_neq(ak1, ak2) <--
         known_statement(stmt),
         if let HashableStatement::NotEqual(ak1, ak2) = stmt;
 
+    // Extract contains relationships from known statements
     known_contains(ak1, ak2) <--
         known_statement(stmt),
         if let HashableStatement::Contains(ak1, ak2) = stmt;
 
+    // Base case: directly known equalities are reachable with empty chain
     reachable_equal(x, y, chain) <--
         known_equal(x, y),
         let chain = vec![];
 
+    // Also add the reverse direction for known equalities (equality is symmetric)
     reachable_equal(y, x, chain) <--
         known_equal(x, y),
         let chain = vec![];
 
-    // Build chains one step at a time
+    // Build chains of equalities through transitivity (if a=b and b=c, then a=c)
     reachable_equal(x, z, new_chain) <--
         reachable_equal(x, y, chain1),
         known_equal(y, z),
-        // Check that z isn't already in our chain
+        // Check that z isn't already in our chain to avoid cycles
         if !chain1.iter().any(|(_, _, output)|
             matches!(output, HashableStatement::Equal(_, ref end) if end == z)),
         let new_chain = {
@@ -196,12 +218,15 @@ ascent! {
             chain
         };
 
+    // Find chains that connect to our target key for equality statements
     connected_to_target(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::Equal(wild_key, concrete_key) = stmt,
         reachable_equal(x, y, chain),
         if y == concrete_key;
 
+    // Find chains for greater-than relationships:
+    // 1. Direct value comparisons (e.g., 10 > 5)
     connected_to_target(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::Gt(wild_key, concrete_key) = stmt,
@@ -222,6 +247,7 @@ ascent! {
             HashableStatement::Gt(x.clone(), y.clone())
         )];
 
+    // 2. Existing greater-than statements
     connected_to_target(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::Gt(wild_key, concrete_key) = stmt,
@@ -232,6 +258,8 @@ ascent! {
         let y = match_key.clone(),
         let chain = vec![];
 
+    // Find chains for less-than relationships:
+    // 1. Direct value comparisons (e.g., 5 < 10)
     connected_to_target(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::Lt(wild_key, concrete_key) = stmt,
@@ -252,6 +280,7 @@ ascent! {
             HashableStatement::Lt(x.clone(), y.clone())
         )];
 
+    // 2. Existing less-than statements
     connected_to_target(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::Lt(wild_key, concrete_key) = stmt,
@@ -262,6 +291,8 @@ ascent! {
         let y = match_key.clone(),
         let chain = vec![];
 
+    // Find chains for not-equal relationships:
+    // 1. Converting greater-than to not-equal (if a > b, then a ≠ b)
     connected_to_target(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::NotEqual(wild_key, concrete_key) = stmt,
@@ -276,6 +307,7 @@ ascent! {
             HashableStatement::NotEqual(x.clone(), y.clone())
         )];
 
+    // 2. Converting less-than to not-equal (if a < b, then a ≠ b)
     connected_to_target(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::NotEqual(wild_key, concrete_key) = stmt,
@@ -290,6 +322,7 @@ ascent! {
             HashableStatement::NotEqual(x.clone(), y.clone())
         )];
 
+    // 3. Existing not-equal statements
     connected_to_target(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::NotEqual(wild_key, concrete_key) = stmt,
@@ -300,6 +333,8 @@ ascent! {
         let y = match_key.clone(),
         let chain = vec![];
 
+    // Find chains for contains relationships:
+    // 1. Direct value comparisons (checking if a value is in an array or set)
     connected_to_target(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::Contains(wild_key, concrete_key) = stmt,
@@ -318,6 +353,7 @@ ascent! {
             HashableStatement::Contains(x.clone(), y.clone())
         )];
 
+    // 2. Existing contains statements
     connected_to_target(x, y, chain) <--
         target_statement(stmt),
         if let WildcardStatement::Contains(wild_key, concrete_key) = stmt,
