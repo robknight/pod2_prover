@@ -15,7 +15,6 @@ impl DeductionEngine {
         }
     }
 
-
     pub fn add_fact(&mut self, fact: HashableStatement) {
         self.prog.known_statement.push((fact,));
     }
@@ -67,6 +66,12 @@ ascent! {
     relation need_lt(AnchoredKey, AnchoredKey);
     relation need_not_equal(AnchoredKey, AnchoredKey);
     
+    // Relations for tracking equality chains
+    relation reachable_equal(AnchoredKey, AnchoredKey, DeductionChain);
+
+    // New relation to track connections to target
+    relation connected_to_target(AnchoredKey, AnchoredKey, DeductionChain);
+    
     // Extract relationships from known statements
     known_value(ak, v) <--
         known_statement(stmt),
@@ -84,6 +89,50 @@ ascent! {
         known_statement(stmt),
         if let HashableStatement::Lt(ak1, ak2) = stmt;
 
+    // Base case: directly known equalities are reachable with empty chain
+    reachable_equal(x, y, chain) <--
+        known_equal(x, y),
+        let chain = vec![];
+
+    // Also add the reverse direction for known equalities
+    reachable_equal(y, x, chain) <--
+        known_equal(x, y),
+        let chain = vec![];
+
+    // Build chains one step at a time
+    reachable_equal(x, z, new_chain) <--
+        reachable_equal(x, y, chain1),
+        known_equal(y, z),
+        // Check that z isn't already in our chain
+        if !chain1.iter().any(|(_, _, output)| 
+            matches!(output, HashableStatement::Equal(_, ref end) if end.0 == z.0 && end.1 == z.1)),
+        let mut new_chain = {
+            let mut chain = chain1.clone();
+            chain.push((
+                NativeOperation::TransitiveEqualFromStatements as u8,
+                vec![
+                    HashableStatement::Equal(x.clone(), y.clone()),
+                    HashableStatement::Equal(y.clone(), z.clone())
+                ],
+                HashableStatement::Equal(x.clone(), z.clone())
+            ));
+            chain
+        };
+
+    // First find all chains that connect to our target key
+    connected_to_target(x, y, chain) <--
+        target_statement(stmt),
+        if let HashableStatement::Equal(_, key2) = stmt,
+        reachable_equal(x, y, chain),
+        if y == key2;
+
+    // Then check which of these chains match our source
+    need_equal(x, z) <--
+        target_statement(stmt),
+        if let HashableStatement::Equal(key1, key2) = stmt,
+        connected_to_target(x, z, _),
+        if x == key1;
+
     // Set up what we need to prove from target statements
     need_to_prove(stmt) <--
         target_statement(stmt);
@@ -96,34 +145,17 @@ ascent! {
         need_to_prove(stmt),
         if let HashableStatement::Lt(x, z) = stmt;
 
-    need_equal(x, z) <--
-        need_to_prove(stmt),
-        if let HashableStatement::Equal(x, z) = stmt;
-
-    need_not_equal(x, y) <--
-        need_to_prove(stmt),
-        if let HashableStatement::NotEqual(x, y) = stmt;
-
     // Base case: if we need to prove something and it's known, we can prove it
     can_prove(stmt, chain) <--
         need_to_prove(stmt),
         known_statement(stmt),
         let chain = vec![];
 
-    // Rule 1: If we need to prove X = Y and Y = Z then X = Z
-    can_prove(new_stmt, new_chain) <--
+    // Use connected_to_target to prove needed equalities
+    can_prove(stmt, chain) <--
         need_equal(x, z),
-        known_equal(x, y),
-        known_equal(y, z),
-        let new_stmt = HashableStatement::Equal(x.clone(), z.clone()),
-        let new_chain = vec![(
-            NativeOperation::TransitiveEqualFromStatements as u8,
-            vec![
-                HashableStatement::Equal(x.clone(), y.clone()),
-                HashableStatement::Equal(y.clone(), z.clone())
-            ],
-            new_stmt.clone()
-        )];
+        connected_to_target(x, z, chain),
+        let stmt = HashableStatement::Equal(x.clone(), z.clone());
 
     // Rule 2: If we need to prove X ≠ Y and X > Y then X ≠ Y
     can_prove(new_stmt, new_chain) <--

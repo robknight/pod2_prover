@@ -15,7 +15,7 @@ fn make_anchored_key(id: &str, key: &str) -> AnchoredKey {
 fn test_transitive_equality() {
     let mut engine = DeductionEngine::new();
     
-    // X = Y, Y = Z
+    // X = Y, Y = Z, Z = Q, Q = W
     engine.add_fact(HashableStatement::Equal(
         make_anchored_key("X", "X"),
         make_anchored_key("Y", "Y")
@@ -26,22 +26,34 @@ fn test_transitive_equality() {
         make_anchored_key("Z", "Z")
     ));
 
-    // Try to prove X = Z
-    engine.set_target(HashableStatement::Equal(
-        make_anchored_key("X", "X"),
-        make_anchored_key("Z", "Z")
+    engine.add_fact(HashableStatement::Equal(
+        make_anchored_key("Z", "Z"),
+        make_anchored_key("Q", "Q")
     ));
 
+    engine.add_fact(HashableStatement::Equal(
+        make_anchored_key("Q", "Q"),
+        make_anchored_key("W", "W")
+    ));
+
+    // Try to prove X = W
+    engine.set_target(HashableStatement::Equal(
+        make_anchored_key("X", "X"),
+        make_anchored_key("W", "W")
+    ));
+
+
+
     let proofs = engine.prove();
-    assert!(!proofs.is_empty(), "Should be able to prove X = Z");
+    assert!(!proofs.is_empty(), "Should be able to prove X = W");
     
     // Check that we used transitive equality
     let (_, chain) = &proofs[0];
-    assert_eq!(chain.len(), 1, "Should have exactly one deduction step");
+    assert_eq!(chain.len(), 3, "Should have exactly three deduction steps");
     let (op_code, inputs, output) = &chain[0];
     assert_eq!(*op_code, NativeOperation::TransitiveEqualFromStatements as u8, 
         "Should use TransitiveEqualFromStatements operation");
-    assert_eq!(inputs.len(), 2, "Should use exactly two input statements");
+    assert_eq!(inputs.len(), 2, "Should use exactly three input statements");
 }
 
 #[test]
@@ -161,4 +173,60 @@ fn test_lt_and_gt_not_equal() {
     let proofs = engine.prove();
     assert!(proofs.is_empty(), 
         "Should NOT be able to prove X ≠ Z because POD2 doesn't support transitive less than relationships yet");
+}
+
+#[test]
+fn test_long_transitive_equality() {
+    let mut engine = DeductionEngine::new();
+    
+    // Set up a long chain: A = B = C = D = E
+    engine.add_fact(HashableStatement::Equal(
+        make_anchored_key("A", "A"),
+        make_anchored_key("B", "B")
+    ));
+    engine.add_fact(HashableStatement::Equal(
+        make_anchored_key("B", "B"),
+        make_anchored_key("C", "C")
+    ));
+    engine.add_fact(HashableStatement::Equal(
+        make_anchored_key("C", "C"),
+        make_anchored_key("D", "D")
+    ));
+    engine.add_fact(HashableStatement::Equal(
+        make_anchored_key("D", "D"),
+        make_anchored_key("E", "E")
+    ));
+
+    // Try to prove A = E (should work through the chain)
+    engine.set_target(HashableStatement::Equal(
+        make_anchored_key("A", "A"),
+        make_anchored_key("E", "E")
+    ));
+
+    let proofs = engine.prove();
+    assert!(!proofs.is_empty(), "Should be able to prove A = E");
+    
+    // Check that we found a proof
+    let (stmt, chain) = &proofs[0];
+    
+    // Verify the statement connects A to E
+    match stmt {
+        HashableStatement::Equal(ak1, ak2) => {
+            assert_eq!(ak1.1, "A", "First key should be A");
+            assert_eq!(ak2.1, "E", "Second key should be E");
+        },
+        _ => panic!("Expected Equal statement")
+    }
+    
+    // Verify we used multiple steps to get there
+    assert!(chain.len() > 1, "Should require multiple steps to prove A = E");
+    
+    // Also try to prove E = A (should work due to symmetry)
+    engine.set_target(HashableStatement::Equal(
+        make_anchored_key("E", "E"),
+        make_anchored_key("A", "A")
+    ));
+    
+    let reverse_proofs = engine.prove();
+    assert!(!reverse_proofs.is_empty(), "Should be able to prove E = A by symmetry");
 } 
