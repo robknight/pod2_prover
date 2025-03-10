@@ -1,232 +1,350 @@
-use crate::{DeductionEngine, HashableStatement};
-use pod2::middleware::{PodId, hash_str, NativeOperation};
-use pod2::frontend::{AnchoredKey, Origin, PodClass, Value};
 
-fn make_signed_origin(id: &str) -> Origin {
-    Origin(PodClass::Signed, PodId(hash_str(id)))
-}
+#[cfg(test)]
+mod tests {
+    use pod2::{frontend::{AnchoredKey, Origin, PodClass}, middleware::{containers::Array as MiddlewareArray, hash_str, NativeOperation, PodId, Value as MiddlewareValue}};
 
-fn make_anchored_key(id: &str, key: &str) -> AnchoredKey {
-    AnchoredKey(make_signed_origin(id), key.to_string())
-}
+    use super::*;
+    use crate::{engine::DeductionEngine, types::{HashableStatement, HashableValue, WildcardAnchoredKey, WildcardId, WildcardStatement}};
 
-#[test]
+    fn make_signed_origin(id: &str) -> Origin {
+        Origin(PodClass::Signed, PodId(hash_str(id)))
+    }
 
-fn test_transitive_equality() {
-    let mut engine = DeductionEngine::new();
-    
-    // X = Y, Y = Z, Z = Q, Q = W
-    engine.add_fact(HashableStatement::Equal(
-        make_anchored_key("X", "X"),
-        make_anchored_key("Y", "Y")
-    ));
-    
-    engine.add_fact(HashableStatement::Equal(
-        make_anchored_key("Y", "Y"),
-        make_anchored_key("Z", "Z")
-    ));
+    fn make_anchored_key(id: &str, key: &str) -> AnchoredKey {
+        AnchoredKey(make_signed_origin(id), key.to_string())
+    }
 
-    engine.add_fact(HashableStatement::Equal(
-        make_anchored_key("Z", "Z"),
-        make_anchored_key("Q", "Q")
-    ));
+    #[test]
+    fn test_transitive_equality() {
 
-    engine.add_fact(HashableStatement::Equal(
-        make_anchored_key("Q", "Q"),
-        make_anchored_key("W", "W")
-    ));
+        let mut engine = DeductionEngine::new();
 
-    // Try to prove X = W
-    engine.set_target(HashableStatement::Equal(
-        make_anchored_key("X", "X"),
-        make_anchored_key("W", "W")
-    ));
+        // X = Y, Y = Z, Z = Q, Q = W
+        engine.add_fact(HashableStatement::Equal(
+            make_anchored_key("X", "X"),
+            make_anchored_key("Y", "Y"),
+        ));
 
+        engine.add_fact(HashableStatement::Equal(
+            make_anchored_key("Y", "Y"),
+            make_anchored_key("Z", "Z"),
+        ));
 
+        engine.add_fact(HashableStatement::Equal(
+            make_anchored_key("Z", "Z"),
+            make_anchored_key("Q", "Q"),
+        ));
 
-    let proofs = engine.prove();
-    assert!(!proofs.is_empty(), "Should be able to prove X = W");
-    
-    // Check that we used transitive equality
-    let (_, chain) = &proofs[0];
-    assert_eq!(chain.len(), 3, "Should have exactly three deduction steps");
-    let (op_code, inputs, output) = &chain[0];
-    assert_eq!(*op_code, NativeOperation::TransitiveEqualFromStatements as u8, 
-        "Should use TransitiveEqualFromStatements operation");
-    assert_eq!(inputs.len(), 2, "Should use exactly three input statements");
-}
+        engine.add_fact(HashableStatement::Equal(
+            make_anchored_key("Q", "Q"),
+            make_anchored_key("W", "W"),
+        ));
 
-#[test]
-fn test_unprovable_statement() {
-    let mut engine = DeductionEngine::new();
-    
-    // X = Y
-    engine.add_fact(HashableStatement::Equal(
-        make_anchored_key("X", "X"),
-        make_anchored_key("Y", "Y")
-    ));
+        // Try to prove X = W
+        engine.set_target(WildcardStatement::Equal(
+            WildcardAnchoredKey(WildcardId::Named("X".to_string()), "X".to_string()),
+            make_anchored_key("W", "W"),
+        ));
 
-    // Try to prove X = Z (should fail - no information about Z)
-    engine.set_target(HashableStatement::Equal(
-        make_anchored_key("X", "X"),
-        make_anchored_key("Z", "Z")
-    ));
+        let proofs = engine.prove();
+        assert!(!proofs.is_empty(), "Should be able to prove X = W");
 
-    let proofs = engine.prove();
-    assert!(proofs.is_empty(), "Should not be able to prove X = Z without information about Z");
-}
+        // Check that we used transitive equality
+        let (_, chain) = &proofs[0];
+        assert_eq!(chain.len(), 3, "Should have exactly three deduction steps");
+        let (op_code, inputs, output) = &chain[0];
+        assert_eq!(
+            *op_code,
+            NativeOperation::TransitiveEqualFromStatements as u8,
+            "Should use TransitiveEqualFromStatements operation"
+        );
+        assert_eq!(inputs.len(), 2, "Should use exactly three input statements");
+    }
 
-#[test]
-fn test_gt_to_not_equal() {
-    let mut engine = DeductionEngine::new();
-    
-    // Given X > Y
-    engine.add_fact(HashableStatement::Gt(
-        make_anchored_key("X", "X"),
-        make_anchored_key("Y", "Y")
-    ));
+    #[test]
+    fn test_wildcard_gt() {
+        let mut engine = DeductionEngine::new();
 
-    // Try to prove X ≠ Y
-    engine.set_target(HashableStatement::NotEqual(
-        make_anchored_key("X", "X"),
-        make_anchored_key("Y", "Y")
-    ));
+        // Add some values
+        engine.add_fact(HashableStatement::ValueOf(
+            make_anchored_key("X", "value"),
+            HashableValue::Int(10),
+        ));
+        engine.add_fact(HashableStatement::ValueOf(
+            make_anchored_key("Y", "value"),
+            HashableValue::Int(5),
+        ));
 
-    let proofs = engine.prove();
-    assert!(!proofs.is_empty(), "Should be able to prove X ≠ Y from X > Y");
-    
-    // Check that we used GtToNotEqual
-    let (_, chain) = &proofs[0];
-    assert_eq!(chain.len(), 1, "Should have exactly one deduction step");
-    let (op_code, inputs, output) = &chain[0];
-    assert_eq!(*op_code, NativeOperation::GtToNotEqual as u8, 
-        "Should use GtToNotEqual operation");
-    assert_eq!(inputs.len(), 1, "Should use exactly one input statement");
-    
-    // Check that the input is the Gt statement
-    match &inputs[0] {
-        HashableStatement::Gt(ak1, ak2) => {
-            assert_eq!(ak1.1, "X", "First key should be X");
-            assert_eq!(ak2.1, "Y", "Second key should be Y");
-        },
-        _ => panic!("Input to GtToNotEqual must be a Gt statement")
+        // Add a direct GT statement
+        engine.add_fact(HashableStatement::Gt(
+            make_anchored_key("A", "value"),
+            make_anchored_key("B", "value"),
+        ));
+
+        // Test case 1: Find GT through value comparison
+        let target = WildcardStatement::Gt(
+            WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
+            make_anchored_key("Y", "value"),
+        );
+        engine.set_target(target.clone());
+
+        let proofs = engine.prove();
+        assert!(!proofs.is_empty(), "Should find X > Y through value comparison");
+        let (stmt, chain) = &proofs[0];
+        
+        // Print the proof in a readable format
+        engine.print_proof(stmt.clone(), chain.clone());
+        
+        assert_eq!(chain.len(), 1, "Should use GtFromEntries");
+        assert_eq!(
+            chain[0].0,
+            NativeOperation::GtFromEntries as u8,
+            "Should use GtFromEntries operation"
+        );
+
+        // Verify the found statement matches what we expect
+        match stmt {
+            HashableStatement::Gt(found_key, target_key) => {
+                assert_eq!(found_key.1, "value", "Found key should have suffix 'value'");
+                assert_eq!(target_key.1, "value", "Target key should have suffix 'value'");
+            },
+            _ => panic!("Expected Gt statement"),
+        }
+    }
+
+    #[test]
+    fn test_wildcard_lt() {
+        let mut engine = DeductionEngine::new();
+
+        // Add some values
+        engine.add_fact(HashableStatement::ValueOf(
+            make_anchored_key("X", "value"),
+            HashableValue::Int(5),
+        ));
+        engine.add_fact(HashableStatement::ValueOf(
+            make_anchored_key("Y", "value"),
+            HashableValue::Int(10),
+        ));
+
+        // Add a direct LT statement
+        engine.add_fact(HashableStatement::Lt(
+            make_anchored_key("A", "value"),
+            make_anchored_key("B", "value"),
+        ));
+
+        // Test case 1: Find LT through value comparison
+        let target = WildcardStatement::Lt(
+            WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
+            make_anchored_key("Y", "value"),
+        );
+        engine.set_target(target.clone());
+
+        let proofs = engine.prove();
+        assert!(!proofs.is_empty(), "Should find X < Y through value comparison");
+        let (stmt, chain) = &proofs[0];
+        
+        // Print the proof in a readable format
+        engine.print_proof(stmt.clone(), chain.clone());
+        
+        assert_eq!(chain.len(), 1, "Should use LtFromEntries");
+        assert_eq!(
+            chain[0].0,
+            NativeOperation::LtFromEntries as u8,
+            "Should use LtFromEntries operation"
+        );
+
+        // Verify the found statement matches what we expect
+        match stmt {
+            HashableStatement::Lt(found_key, target_key) => {
+                assert_eq!(found_key.1, "value", "Found key should have suffix 'value'");
+                assert_eq!(target_key.1, "value", "Target key should have suffix 'value'");
+            },
+            _ => panic!("Expected Lt statement"),
+        }
+    }
+
+    #[test]
+    fn test_wildcard_neq() {
+        let mut engine = DeductionEngine::new();
+
+        // Add a GT statement that we'll convert to NEq
+        engine.add_fact(HashableStatement::Gt(
+            make_anchored_key("X", "value"),
+            make_anchored_key("Y", "value"),
+        ));
+
+        // Add a direct NEq statement
+        engine.add_fact(HashableStatement::NotEqual(
+            make_anchored_key("A", "value"),
+            make_anchored_key("B", "value"),
+        ));
+
+        // Test case 1: Find NEq through GT conversion
+        let target = WildcardStatement::NotEqual(
+            WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
+            make_anchored_key("Y", "value"),
+        );
+        engine.set_target(target.clone());
+
+        let proofs = engine.prove();
+        assert!(!proofs.is_empty(), "Should find X != Y through GT conversion");
+        let (stmt, chain) = &proofs[0];
+        
+        // Print the proof in a readable format
+        engine.print_proof(stmt.clone(), chain.clone());
+        
+        assert_eq!(chain.len(), 1, "Should use GtToNotEqual");
+        assert_eq!(
+            chain[0].0,
+            NativeOperation::GtToNotEqual as u8,
+            "Should use GtToNotEqual operation"
+        );
+
+        // Verify the found statement matches what we expect
+        match stmt {
+            HashableStatement::NotEqual(found_key, target_key) => {
+                assert_eq!(found_key.1, "value", "Found key should have suffix 'value'");
+                assert_eq!(target_key.1, "value", "Target key should have suffix 'value'");
+            },
+            _ => panic!("Expected NotEqual statement"),
+        }
+    }
+
+    #[test]
+    fn test_wildcard_neq_from_lt() {
+        let mut engine = DeductionEngine::new();
+
+        // Add an LT statement that we'll convert to NEq
+        engine.add_fact(HashableStatement::Lt(
+            make_anchored_key("X", "value"),
+            make_anchored_key("Y", "value"),
+        ));
+
+        // Add a direct NEq statement
+        engine.add_fact(HashableStatement::NotEqual(
+            make_anchored_key("A", "value"),
+            make_anchored_key("B", "value"),
+        ));
+
+        // Test case 1: Find NEq through LT conversion
+        let target = WildcardStatement::NotEqual(
+            WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
+            make_anchored_key("Y", "value"),
+        );
+        engine.set_target(target.clone());
+
+        let proofs = engine.prove();
+        assert!(!proofs.is_empty(), "Should find X != Y through LT conversion");
+        let (stmt, chain) = &proofs[0];
+        
+        // Print the proof in a readable format
+        engine.print_proof(stmt.clone(), chain.clone());
+        
+        assert_eq!(chain.len(), 1, "Should use LtToNotEqual");
+        assert_eq!(
+            chain[0].0,
+            NativeOperation::LtToNotEqual as u8,
+            "Should use LtToNotEqual operation"
+        );
+
+        // Verify the found statement matches what we expect
+        match stmt {
+            HashableStatement::NotEqual(found_key, target_key) => {
+                assert_eq!(found_key.1, "value", "Found key should have suffix 'value'");
+                assert_eq!(target_key.1, "value", "Target key should have suffix 'value'");
+            },
+            _ => panic!("Expected NotEqual statement"),
+        }
+    }
+
+    #[test]
+    fn test_wildcard_contains() {
+        let mut engine = DeductionEngine::new();
+
+        // Add an array that contains a value
+        let values = vec![
+            MiddlewareValue::from(1i64),
+            MiddlewareValue::from(2i64),
+            MiddlewareValue::from(3i64),
+        ];
+        let arr = MiddlewareArray::new(&values).unwrap();
+        
+        engine.add_fact(HashableStatement::ValueOf(
+            make_anchored_key("X", "value"),
+            HashableValue::Array(arr),
+        ));
+        engine.add_fact(HashableStatement::ValueOf(
+            make_anchored_key("Y", "value"),
+            HashableValue::Int(2),
+        ));
+
+        // Add a direct Contains statement
+        engine.add_fact(HashableStatement::Contains(
+            make_anchored_key("A", "value"),
+            make_anchored_key("B", "value"),
+        ));
+
+        // Test case 1: Find Contains through value comparison
+        let target = WildcardStatement::Contains(
+            WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
+            make_anchored_key("Y", "value"),
+        );
+        engine.set_target(target.clone());
+
+        let proofs = engine.prove();
+        assert!(!proofs.is_empty(), "Should find X contains Y through value comparison");
+        let (stmt, chain) = &proofs[0];
+        
+        // Print the proof in a readable format
+        engine.print_proof(stmt.clone(), chain.clone());
+        
+        assert_eq!(chain.len(), 1, "Should use ContainsFromEntries");
+        assert_eq!(
+            chain[0].0,
+            NativeOperation::ContainsFromEntries as u8,
+            "Should use ContainsFromEntries operation"
+        );
+
+        // Verify the found statement matches what we expect
+        match stmt {
+            HashableStatement::Contains(found_key, target_key) => {
+                assert_eq!(found_key.1, "value", "Found key should have suffix 'value'");
+                assert_eq!(target_key.1, "value", "Target key should have suffix 'value'");
+            },
+            _ => panic!("Expected Contains statement"),
+        }
+    }
+
+    #[test]
+    fn test_wildcard_contains_unprovable() {
+        let mut engine = DeductionEngine::new();
+
+        // Add an array that contains values 1, 2, 3
+        let values = vec![
+            MiddlewareValue::from(1i64),
+            MiddlewareValue::from(2i64),
+            MiddlewareValue::from(3i64),
+        ];
+        let arr = MiddlewareArray::new(&values).unwrap();
+        
+        engine.add_fact(HashableStatement::ValueOf(
+            make_anchored_key("X", "value"),
+            HashableValue::Array(arr),
+        ));
+        // Add a value that is NOT in the array
+        engine.add_fact(HashableStatement::ValueOf(
+            make_anchored_key("Y", "value"),
+            HashableValue::Int(4),
+        ));
+
+        // Try to prove that X contains Y (which should be impossible)
+        let target = WildcardStatement::Contains(
+            WildcardAnchoredKey(WildcardId::Named("n".to_string()), "value".to_string()),
+            make_anchored_key("Y", "value"),
+        );
+        engine.set_target(target.clone());
+
+        let proofs = engine.prove();
+        assert!(proofs.is_empty(), "Should NOT be able to prove X contains Y since 4 is not in the array");
     }
 }
-
-#[test]
-fn test_lt_to_not_equal() {
-    let mut engine = DeductionEngine::new();
-    
-    // Given X < Y
-    engine.add_fact(HashableStatement::Lt(
-        make_anchored_key("X", "X"),
-        make_anchored_key("Y", "Y")
-    ));
-
-    // Try to prove X ≠ Y
-    engine.set_target(HashableStatement::NotEqual(
-        make_anchored_key("X", "X"),
-        make_anchored_key("Y", "Y")
-    ));
-
-    let proofs = engine.prove();
-    assert!(!proofs.is_empty(), "Should be able to prove X ≠ Y from X < Y");
-    
-    // Check that we used LtToNotEqual
-    let (_, chain) = &proofs[0];
-    assert_eq!(chain.len(), 1, "Should have exactly one deduction step");
-    let (op_code, inputs, output) = &chain[0];
-    assert_eq!(*op_code, NativeOperation::LtToNotEqual as u8, 
-        "Should use LtToNotEqual operation");
-    assert_eq!(inputs.len(), 1, "Should use exactly one input statement");
-    
-    // Check that the input is the Lt statement
-    match &inputs[0] {
-        HashableStatement::Lt(ak1, ak2) => {
-            assert_eq!(ak1.1, "X", "First key should be X");
-            assert_eq!(ak2.1, "Y", "Second key should be Y");
-        },
-        _ => panic!("Input to LtToNotEqual must be a Lt statement")
-    }
-}
-
-#[test]
-fn test_lt_and_gt_not_equal() {
-    let mut engine = DeductionEngine::new();
-    
-    // Given X < Y and Y < Z
-    engine.add_fact(HashableStatement::Lt(
-        make_anchored_key("X", "X"),
-        make_anchored_key("Y", "Y")
-    ));
-    engine.add_fact(HashableStatement::Lt(
-        make_anchored_key("Y", "Y"),
-        make_anchored_key("Z", "Z")
-    ));
-
-    // Try to prove X ≠ Z - this should fail because POD2 doesn't support transitive Lt
-    engine.set_target(HashableStatement::NotEqual(
-        make_anchored_key("X", "X"),
-        make_anchored_key("Z", "Z")
-    ));
-
-    let proofs = engine.prove();
-    assert!(proofs.is_empty(), 
-        "Should NOT be able to prove X ≠ Z because POD2 doesn't support transitive less than relationships yet");
-}
-
-#[test]
-fn test_long_transitive_equality() {
-    let mut engine = DeductionEngine::new();
-    
-    // Set up a long chain: A = B = C = D = E
-    engine.add_fact(HashableStatement::Equal(
-        make_anchored_key("A", "A"),
-        make_anchored_key("B", "B")
-    ));
-    engine.add_fact(HashableStatement::Equal(
-        make_anchored_key("B", "B"),
-        make_anchored_key("C", "C")
-    ));
-    engine.add_fact(HashableStatement::Equal(
-        make_anchored_key("C", "C"),
-        make_anchored_key("D", "D")
-    ));
-    engine.add_fact(HashableStatement::Equal(
-        make_anchored_key("D", "D"),
-        make_anchored_key("E", "E")
-    ));
-
-    // Try to prove A = E (should work through the chain)
-    engine.set_target(HashableStatement::Equal(
-        make_anchored_key("A", "A"),
-        make_anchored_key("E", "E")
-    ));
-
-    let proofs = engine.prove();
-    assert!(!proofs.is_empty(), "Should be able to prove A = E");
-    
-    // Check that we found a proof
-    let (stmt, chain) = &proofs[0];
-    
-    // Verify the statement connects A to E
-    match stmt {
-        HashableStatement::Equal(ak1, ak2) => {
-            assert_eq!(ak1.1, "A", "First key should be A");
-            assert_eq!(ak2.1, "E", "Second key should be E");
-        },
-        _ => panic!("Expected Equal statement")
-    }
-    
-    // Verify we used multiple steps to get there
-    assert!(chain.len() > 1, "Should require multiple steps to prove A = E");
-    
-    // Also try to prove E = A (should work due to symmetry)
-    engine.set_target(HashableStatement::Equal(
-        make_anchored_key("E", "E"),
-        make_anchored_key("A", "A")
-    ));
-    
-    let reverse_proofs = engine.prove();
-    assert!(!reverse_proofs.is_empty(), "Should be able to prove E = A by symmetry");
-} 
