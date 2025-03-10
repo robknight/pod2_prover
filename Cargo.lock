@@ -533,6 +533,7 @@ source = "git+https://github.com/0xPolygonZero/plonky2#4e0834d71150af6001a82411b
 [[package]]
 name = "pod2"
 version = "0.1.0"
+source = "git+https://github.com/0xPARC/pod2.git?branch=main#aa4d0a26709946832427e1ce1a8906d6bb51773d"
 dependencies = [
  "anyhow",
  "dyn-clone",

@@ -5,5 +5,5 @@ edition = "2021"
 
 [dependencies]
 ascent = "0.8.0"
-pod2 = { path = "../pod2" }
+pod2 = { git = "https://github.com/0xPARC/pod2.git", branch = "main" }
 
