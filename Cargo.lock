@@ -47,14 +47,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ascent-pod2"
-version = "0.1.0"
-dependencies = [
- "ascent",
- "pod2",
-]
-
-[[package]]
 name = "ascent_base"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -542,6 +534,14 @@ dependencies = [
  "plonky2",
  "strum",
  "strum_macros",
+]
+
+[[package]]
+name = "pod2_prover"
+version = "0.1.0"
+dependencies = [
+ "ascent",
+ "pod2",
 ]
 
 [[package]]

@@ -1,5 +1,5 @@
 [package]
-name = "ascent-pod2"
+name = "pod2_prover"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,3 +7,6 @@ edition = "2021"
 ascent = "0.8.0"
 pod2 = { git = "https://github.com/0xPARC/pod2.git", branch = "main" }
 
+[lib]
+name = "pod2_prover"
+path = "src/lib.rs"

@@ -47,10 +47,14 @@ mod tests {
         ));
 
         let proofs = engine.prove();
+
         assert!(!proofs.is_empty(), "Should be able to prove X = W");
 
+ 
+        
         // Check that we used transitive equality
-        let (_, chain) = &proofs[0];
+        let (stmt, chain) = &proofs[0];
+        engine.print_proof(stmt.clone(), chain.clone());
         assert_eq!(chain.len(), 3, "Should have exactly three deduction steps");
         let (op_code, inputs, output) = &chain[0];
         assert_eq!(
