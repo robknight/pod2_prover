@@ -41,10 +41,9 @@ impl Hash for HashableValue {
             HashableValue::String(s) => s.hash(state),
             HashableValue::Int(i) => i.hash(state),
             HashableValue::Bool(b) => b.hash(state),
-            // TODO: Implement hash for Dictionary, Set, and Array
-            HashableValue::Dictionary(_) => {},
-            HashableValue::Set(_) => {},
-            HashableValue::Array(_) => {},
+            HashableValue::Dictionary(d) => d.commitment().hash(state),
+            HashableValue::Set(s) => s.commitment().hash(state),
+            HashableValue::Array(a) => a.commitment().hash(state),
         }
     }
 }

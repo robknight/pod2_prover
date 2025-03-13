@@ -2,7 +2,6 @@
 mod tests {
     use pod2::{frontend::{AnchoredKey, Origin, PodClass}, middleware::{containers::Array as MiddlewareArray, hash_str, NativeOperation, PodId, Value as MiddlewareValue}};
 
-    use super::*;
     use crate::{engine::DeductionEngine, types::{HashableStatement, HashableValue, WildcardAnchoredKey, WildcardId, WildcardStatement}};
 
     fn make_signed_origin(id: &str) -> Origin {
@@ -55,7 +54,7 @@ mod tests {
         let (stmt, chain) = &proofs[0];
         engine.print_proof(stmt.clone(), chain.clone());
         assert_eq!(chain.len(), 3, "Should have exactly three deduction steps");
-        let (op_code, inputs, output) = &chain[0];
+        let (op_code, inputs, _) = &chain[0];
         assert_eq!(
             *op_code,
             NativeOperation::TransitiveEqualFromStatements as u8,
