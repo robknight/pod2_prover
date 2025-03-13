@@ -54,7 +54,7 @@ pub type DeductionChain = Vec<DeductionStep>;
 
 // Helper function to format AnchoredKey
 fn format_anchored_key(ak: &AnchoredKey) -> String {
-    ak.1.to_string()  // Just show the key part
+    format!("{}:{}", ak.0.1.to_string(), ak.1)  // Show both origin ID and key
 }
 
 impl fmt::Display for HashableValue {
@@ -144,14 +144,19 @@ impl WildcardAnchoredKey {
     }
 
     pub fn matches(&self, concrete: &AnchoredKey) -> bool {
-        if let WildcardId::Concrete(origin) = &self.0 {
-            return *origin == concrete.0 && self.1 == concrete.1;
-        }
-
-        if let WildcardId::Named(_) = &self.0 {
-            return self.1 == concrete.1;
-        }
-
-        false
+        println!("Matching wildcard {:?} against concrete key {:?}", self, concrete);
+        let result = if let WildcardId::Concrete(origin) = &self.0 {
+            let matches = *origin == concrete.0 && self.1 == concrete.1;
+            println!("  Concrete match: origin {} == {} ? {}", origin.1.to_string(), concrete.0.1.to_string(), matches);
+            matches
+        } else if let WildcardId::Named(_) = &self.0 {
+            let matches = self.1 == concrete.1;
+            println!("  Named match: key {} == {} ? {}", self.1, concrete.1, matches);
+            matches
+        } else {
+            false
+        };
+        println!("  Final result: {}", result);
+        result
     }
 }

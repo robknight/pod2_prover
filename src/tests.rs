@@ -1,4 +1,3 @@
-
 #[cfg(test)]
 mod tests {
     use pod2::{frontend::{AnchoredKey, Origin, PodClass}, middleware::{containers::Array as MiddlewareArray, hash_str, NativeOperation, PodId, Value as MiddlewareValue}};
@@ -350,5 +349,77 @@ mod tests {
 
         let proofs = engine.prove();
         assert!(proofs.is_empty(), "Should NOT be able to prove X contains Y since 4 is not in the array");
+    }
+
+    #[test]
+    fn test_dependent_proofs() {
+        let mut engine = DeductionEngine::new();
+        
+        // Set up initial facts
+        engine.add_fact(HashableStatement::Equal(
+            make_anchored_key("a", "value"),
+            make_anchored_key("b", "value")
+        ));
+        engine.add_fact(HashableStatement::ValueOf(
+            make_anchored_key("b", "value"),
+            HashableValue::Int(10)
+        ));
+        engine.add_fact(HashableStatement::ValueOf(
+            make_anchored_key("c", "value"),
+            HashableValue::Int(10)
+        ));
+        engine.add_fact(HashableStatement::Equal(
+            make_anchored_key("c", "value"),
+            make_anchored_key("d", "value")
+        ));
+        
+        let targets = vec![
+            // First prove b = c (because they have the same value)
+            WildcardStatement::Equal(
+                WildcardAnchoredKey(WildcardId::Concrete(make_signed_origin("b")), "value".to_string()),
+                make_anchored_key("c", "value")
+            ),
+            // Then we can prove a = d (using the chain a = b = c = d)
+            WildcardStatement::Equal(
+                WildcardAnchoredKey(WildcardId::Concrete(make_signed_origin("a")), "value".to_string()),
+                make_anchored_key("d", "value")
+            ),
+        ];
+
+        let proofs = engine.prove_multiple(targets);
+        assert_eq!(proofs.len(), 2, "Should prove both statements");
+        
+        // Print all proofs for debugging
+        for (i, (stmt, chain)) in proofs.iter().enumerate() {
+            println!("\nProof {}:", i + 1);
+            engine.print_proof(stmt.clone(), chain.clone());
+        }
+        
+        // First proof should be b = c
+        match &proofs[0].0 {
+            HashableStatement::Equal(k1, k2) => {
+                assert_eq!(k1.1, "value");
+                assert_eq!(k2.1, "value");
+                println!("First proof keys: {} = {}", k1.0.1.to_string(), k2.0.1.to_string());
+                assert_eq!(k1.0.1.to_string(), hash_str("b").to_string());
+                assert_eq!(k2.0.1.to_string(), hash_str("c").to_string());
+            },
+            _ => panic!("First proof should be Equal statement")
+        }
+        
+        // Second proof should be a = d
+        match &proofs[1].0 {
+            HashableStatement::Equal(k1, k2) => {
+                assert_eq!(k1.1, "value");
+                assert_eq!(k2.1, "value");
+                println!("Second proof keys: {} = {}", k1.0.1.to_string(), k2.0.1.to_string());
+                assert_eq!(k1.0.1.to_string(), hash_str("a").to_string());
+                assert_eq!(k2.0.1.to_string(), hash_str("d").to_string());
+            },
+            _ => panic!("Second proof should be Equal statement")
+        }
+        
+        // The second proof should have a non-empty chain showing the transitive steps
+        assert!(!proofs[1].1.is_empty(), "Second proof should require deduction steps");
     }
 }

@@ -56,6 +56,11 @@ impl DeductionEngine {
         }
     }
 
+    // Reset the program's state
+    pub fn reset(&mut self) {
+        self.prog = AscentProgram::default();
+    }
+
     // Add a known fact to the engine
     pub fn add_fact(&mut self, fact: HashableStatement) {
         self.prog.known_statement.push((fact,));
@@ -91,6 +96,77 @@ impl DeductionEngine {
             println!("Deduced:");
             println!("  => {}", output);
         }
+    }
+
+    pub fn prove_multiple(&mut self, targets: Vec<WildcardStatement>) -> Vec<(HashableStatement, DeductionChain)> {
+        let mut all_proofs = Vec::new();
+        let mut remaining_targets = targets;
+
+        // Store original known statements before we start
+        let original_known_statements: Vec<HashableStatement> = self.prog.known_statement.iter()
+            .map(|(stmt,)| stmt.clone())
+            .collect();
+
+        while !remaining_targets.is_empty() {
+            let mut new_remaining = Vec::new();
+            let mut proved_something = false;
+
+            println!("\nAttempting to prove {} remaining targets", remaining_targets.len());
+            // Try to prove each remaining target
+            for (i, target) in remaining_targets.iter().enumerate() {
+                println!("\nTrying to prove target {}: {:?}", i, target);
+                
+                // Reset the program's state before each attempt
+                self.reset();
+                
+                // Re-add original known statements
+                for stmt in &original_known_statements {
+                    self.add_fact(stmt.clone());
+                }
+                
+                // Re-add all previously proven facts
+                for (_, _, output) in all_proofs.iter().flat_map(|(_, chain): &(HashableStatement, DeductionChain)| chain.iter()) {
+                    self.add_fact(output.clone());
+                }
+                
+                self.prog.target_statement = vec![(target.clone(),)];
+                
+                self.prog.run();
+                if let Some(proof) = self.prog.can_prove.first().cloned() {
+                    println!("Successfully proved target {}: {:?}", i, proof.0);
+                    // Successfully proved this target
+                    // Add all intermediate steps in the proof chain as facts
+                    for (_, _, output) in &proof.1 {
+                        println!("Adding intermediate fact: {:?}", output);
+                        self.add_fact(output.clone());
+                    }
+                    // Add the final proven statement as a fact
+                    println!("Adding final fact: {:?}", proof.0);
+                    self.add_fact(proof.0.clone());
+                    all_proofs.push(proof);
+                    proved_something = true;
+                } else {
+                    println!("Could not prove target {} yet", i);
+                    // Couldn't prove it yet, keep it for next round
+                    new_remaining.push(target.clone());
+                }
+            }
+
+            // If we didn't prove anything new this round, we're stuck
+            if !proved_something {
+                println!("\nNo new proofs found this round, stopping");
+                // These statements are unprovable with current knowledge
+                break;
+            }
+
+            remaining_targets = new_remaining;
+        }
+
+        println!("\nFinal proofs:");
+        for (i, proof) in all_proofs.iter().enumerate() {
+            println!("Proof {}: {:?}", i, proof.0);
+        }
+        all_proofs
     }
 }
 
@@ -198,14 +274,25 @@ ascent! {
         known_equal(x, y),
         let chain = vec![];
 
+    // Add equality from values to reachable_equal
+    reachable_equal(x, y, chain) <--
+        known_value(x, v1),
+        known_value(y, v2),
+        if v1 == v2,
+        let chain = vec![(
+            NativeOperation::EqualFromEntries as u8,
+            vec![
+                HashableStatement::ValueOf(x.clone(), v1.clone()),
+                HashableStatement::ValueOf(y.clone(), v2.clone())
+            ],
+            HashableStatement::Equal(x.clone(), y.clone())
+        )];
+
     // Build chains of equalities through transitivity (if a=b and b=c, then a=c)
-    reachable_equal(x, z, new_chain) <--
+    reachable_equal(x, z, chain) <--
         reachable_equal(x, y, chain1),
         known_equal(y, z),
-        // Check that z isn't already in our chain to avoid cycles
-        if !chain1.iter().any(|(_, _, output)|
-            matches!(output, HashableStatement::Equal(_, ref end) if end == z)),
-        let new_chain = {
+        let chain = {
             let mut chain = chain1.clone();
             chain.push((
                 NativeOperation::TransitiveEqualFromStatements as u8,
@@ -224,6 +311,25 @@ ascent! {
         if let WildcardStatement::Equal(wild_key, concrete_key) = stmt,
         reachable_equal(x, y, chain),
         if y == concrete_key;
+
+    // Prove equality from values (if two keys have the same value, they're equal)
+    connected_to_target(x, y, chain) <--
+        target_statement(stmt),
+        if let WildcardStatement::Equal(wild_key, concrete_key) = stmt,
+        known_value(found_key, v1),
+        known_value(match_key, v2),
+        if wild_key.matches(&found_key) && match_key == concrete_key,
+        if v1 == v2,
+        let x = found_key.clone(),
+        let y = match_key.clone(),
+        let chain = vec![(
+            NativeOperation::EqualFromEntries as u8,
+            vec![
+                HashableStatement::ValueOf(x.clone(), v1.clone()),
+                HashableStatement::ValueOf(y.clone(), v2.clone())
+            ],
+            HashableStatement::Equal(x.clone(), y.clone())
+        )];
 
     // Find chains for greater-than relationships:
     // 1. Direct value comparisons (e.g., 10 > 5)
